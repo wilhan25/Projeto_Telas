@@ -10,8 +10,6 @@
 
 Adafruit_SSD1306 display(Largura_Tela,Comprimento_Tela, &Wire, -1);
 
-int porcentagem = 0;
-
 void setup(){
   Wire.begin(13,14);
 
@@ -19,36 +17,28 @@ void setup(){
     for(;;);
   }
   display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(4,4);
+  display.print("-- CONFIGURACOES --");
+
+  display.fillRoundRect(4,18,120,14,4,SSD1306_WHITE);
+
+  display.setTextColor(SSD1306_BLACK);
+  display.setCursor(10,21);
+  display.print(">1. SENSOR DE TEMP");
+
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(10,36);
+  display.print(" 2. CONTROLE DE LED");
+
+  display.setCursor(10,51);
+  display.print(" 3, SPACE IMPACT :)");
+
+  display.display();
 }
 
 void loop(){
-  display.clearDisplay(); //limap tela
-
-  // (x que vai começar, y que vai começar, largura q vai ter, altura que vai ter, cor)
-  display.drawRect(0,0,128,64,SSD1306_WHITE); //faz uma borda por toda tela
-
-  display.setTextSize(1); //tamanho do texto
-  display.setTextColor(SSD1306_WHITE); //cor do texto
-  display.setCursor(34,12);
-  display.print("CARREGANDO");
-
-   // (x que vai começar, y que vai começar, largura q vai ter, altura que vai ter, cor)
-  display.drawRect(10,34,104,12,SSD1306_WHITE);
-
-  display.fillRect(12,36,porcentagem,8,SSD1306_WHITE);
-
-  display.setCursor(54,50);
-  display.print(porcentagem);
-  display.print("%");
-
-  display.display(); //joga oq está na memória para a tela
-
-  porcentagem++; // Aumenta o progresso
-  if (porcentagem > 100) {
-    porcentagem = 0; // Quando chega em 100, reinicia o ciclo
-    delay(1000);     // Espera 1 segundo antes de recomeçar
-  }
-
-  delay(30); // Controla a velocidade do carregamento
 
 }
