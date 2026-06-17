@@ -2,25 +2,37 @@
 #include <TFT_eSPI.h>
 
 TFT_eSPI tft = TFT_eSPI();
+int bolaRaio = 8, bolaX,bolaY, velocX = 2,velocY = 2;
 
 void setup() {
 
   tft.init(); //inicaliza a tela
   tft.setRotation(3); // seta a orientação da tela entra as opções de 0 a 3
-  uint16_t corFundo = tft.color565(10,30,60); //uma cor para o fundo deste exemplo
-  tft.fillScreen(corFundo); //seta o fundo para acor criada
+  tft.fillScreen(TFT_BLACK); //seta o fundo para preto
 
-  // (X, Y, Largura, Altura, Cor)
-  tft.drawRect(60,44,40,40,TFT_WHITE);
-
-  // config do texto
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_YELLOW, corFundo);
-  tft.setCursor(45,95);
-  tft.print("TESTE 1: OK");
-
+  // calculo pra ficar no meio da tela no inicio
+  bolaX = tft.width()/2; 
+  bolaY = tft.height()/2;
 }
 
 void loop() {
+
+  tft.fillCircle(bolaX,bolaY,bolaRaio, TFT_BLACK); //apaga a bolinha anterior
+
+  bolaX += velocX;
+  bolaY += velocY;
+  
+  // Se a posição X da bola passar da largura da tela (menos o raio) ou for menor que o raio:
+  if(bolaX >= (tft.width()- bolaRaio) || bolaX<= bolaRaio){
+    velocX = -velocX;
+  }
+  // Colisão no Topo ou no Fundo
+  if(bolaY >=(tft.height()-bolaRaio) || bolaY <= bolaRaio){
+    velocY = -velocY;
+  }
+
+  tft.fillCircle(bolaX,bolaY,bolaRaio,TFT_GREEN); //desenha a bolinha
+
+  delay(16); //delay para ficar a 60fps
 
 }
