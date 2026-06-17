@@ -17,7 +17,7 @@ void setup() {
   tft.setTextSize(1);
   tft.setTextColor(TFT_YELLOW, corFundo);
   tft.setCursor(45,95);
-  tft.print("TESTE 1: OK")
+  tft.print("TESTE 1: OK");
 
 }
 
