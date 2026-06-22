@@ -1,176 +1,105 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
+#include <lvgl.h>
 
-// Definição dos pinos dos botões (Ajuste se necessário)
-#define BOTAO_ACAO 12  // Botão 1: Enter / Voltar
-#define BOTAO_NEXT 13  // Botão 2: Navegar (Descer)
+// Importa os arquivos gerados pelo EEZ Studio
+#include "ui/ui.h"
+#include "ui/screens.h"
 
-TFT_eSPI tft = TFT_eSPI(); 
-TFT_eSprite telaVirtual = TFT_eSprite(&tft); // Instancia a tela virtual (Buffer)
+TFT_eSPI tft = TFT_eSPI();
 
-// Estados do menu
-enum Telas { TELA_MENU, TELA_STATUS, TELA_CONFIGS, TELA_SOBRE };
-Telas telaAtual = TELA_MENU; 
+#define SCREEN_WIDTH  160
+#define SCREEN_HEIGHT 128
+#define PINO_POT      34  // Pino analógico do potenciômetro
 
-const char* menuItens[] = {"1. STATUS", "2. CONFIGS", "3. SOBRE"};
-const int TOTAL_ITENS = 3;
-int itemSelecionado = 0;   
-volatile bool atualizarTela = true; // Flag compartilhada entre as tarefas
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[SCREEN_WIDTH * 10];
 
-// Protótipo da tarefa do FreeRTOS
-void tarefaBotoes(void *pvParameters);
+// Função ponte de renderização (LVGL -> TFT_eSPI)
+void meu_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
+  tft.startWrite();
+  tft.setAddrWindow(area->x1, area->y1, w, h);
+  tft.pushColors((uint16_t *)&color_p->full, w * h, true);
+  tft.endWrite();
+  lv_disp_flush_ready(disp);
+}
 
-// --- 1. TELA: MENU PRINCIPAL (Renderizado via Sprite) ---
-void desenharMenuPrincipal() {
-  telaVirtual.fillSprite(TFT_BLACK); // Limpa o buffer virtual em vez da tela real
-  
-  telaVirtual.setTextSize(1); 
-  telaVirtual.setTextColor(TFT_YELLOW); 
-  telaVirtual.setTextDatum(TC_DATUM);
-  telaVirtual.drawString("MENU PRINCIPAL", telaVirtual.width() / 2, 6);
-  telaVirtual.drawFastHLine(10, 18, telaVirtual.width() - 20, TFT_YELLOW);
-
-  telaVirtual.setTextDatum(ML_DATUM);
-  for (int i = 0; i < TOTAL_ITENS; i++) {
-    int posY = 40 + (i * 24); 
-    if (i == itemSelecionado) {
-      // Desenha o retângulo de seleção azul
-      telaVirtual.fillRect(10, posY - 10, telaVirtual.width() - 20, 20, TFT_BLUE);
-      telaVirtual.setTextColor(TFT_WHITE, TFT_BLUE);
-    } else {
-      telaVirtual.setTextColor(TFT_GREEN, TFT_BLACK);
-    }
-    telaVirtual.drawString(menuItens[i], 20, posY);
+// Tarefa do FreeRTOS: Motor Gráfico do LVGL
+void tarefaLVGL(void *pvParameters) {
+  while (1) {
+    lv_timer_handler(); 
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
-
-  // Envia o bloco de memória pronto direto para o display físico (Origem 0,0)
-  telaVirtual.pushSprite(0, 0); 
 }
 
-// --- 2. TELA: STATUS (Renderizado via Sprite) ---
-void desenharTelaStatus() {
-  telaVirtual.fillSprite(tft.color565(10, 40, 10)); // Fundo verde escuro no buffer
-  
-  telaVirtual.setTextSize(1); 
-  telaVirtual.setTextColor(TFT_WHITE); 
-  telaVirtual.setTextDatum(TC_DATUM);
-  telaVirtual.drawString("[ 1. TELA DE STATUS ]", telaVirtual.width() / 2, 10);
-  
-  // Reseta o datum para TL_DATUM para o print processar o \n corretamente
-  telaVirtual.setTextDatum(TL_DATUM); 
-  telaVirtual.setCursor(35, 45); 
-  telaVirtual.setTextSize(2);
-  telaVirtual.print("CPU: 42%\nRAM: OK");
-
-  telaVirtual.pushSprite(0, 0); // Joga na tela
+// Tarefa do FreeRTOS: O Coração do Tempo do LVGL
+void tarefaTick(void *pvParameters) {
+  while (1) {
+    lv_tick_inc(1);
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
 }
 
-// --- 3. TELA: CONFIGURAÇÕES (Renderizado via Sprite) ---
-void desenharTelaConfigs() {
-  telaVirtual.fillSprite(tft.color565(40, 10, 10)); // Fundo vermelho escuro no buffer
-  
-  telaVirtual.setTextSize(1); 
-  telaVirtual.setTextColor(TFT_WHITE); 
-  telaVirtual.setTextDatum(TC_DATUM);
-  telaVirtual.drawString("[ 2. CONFIGURACOES ]", telaVirtual.width() / 2, 10);
-  
-  telaVirtual.setTextDatum(TL_DATUM);
-  telaVirtual.setCursor(20, 50);
-  telaVirtual.setTextSize(1);
-  telaVirtual.print("Use os botoes para\nalterar o brilho...");
+// --- NOVA TAREFA: LEITURA DO POTENCIÔMETRO ---
+void tarefaLeituraPot(void *pvParameters) {
+  pinMode(PINO_POT, INPUT);
 
-  telaVirtual.pushSprite(0, 0); // Joga na tela
+  while (1) {
+    // Lê o ADC do ESP32 (0 a 4095)
+    int leitura_crua = analogRead(PINO_POT);
+
+    // Converte a leitura para uma porcentagem de 0.00 a 100.00
+    float porcentagem = (leitura_crua / 4095.0) * 100.0;
+
+    // 1. Atualiza o valor do Arco do EEZ Studio (o arco aceita inteiros de 0 a 100)
+    lv_arc_set_value(objects.arco_pot, (int)porcentagem);
+
+    // 2. Formata o texto para exibir com duas casas decimais e vírgula (ex: "42,50")
+    char buffer_texto[10];
+    snprintf(buffer_texto, sizeof(buffer_texto), "%05.2f", porcentagem);
+    if (buffer_texto[2] == '.') {
+      buffer_texto[2] = ','; // Troca o ponto pela vírgula para combinar com seu layout
+    }
+
+    // 3. Atualiza o Label do EEZ Studio dinamicamente
+    lv_label_set_text(objects.valor_pot, buffer_texto);
+
+    // Aguarda 50ms antes da próxima leitura (Estabilidade)
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
 }
 
-// --- 4. TELA: SOBRE (Renderizado via Sprite) ---
-void desenharTelaSobre() {
-  telaVirtual.fillSprite(TFT_NAVY); // Fundo azul marinho no buffer
-  
-  telaVirtual.setTextSize(1); 
-  telaVirtual.setTextColor(TFT_YELLOW); 
-  telaVirtual.setTextDatum(TC_DATUM);
-  telaVirtual.drawString("[ 3. SOBRE ]", telaVirtual.width() / 2, 10);
-  
-  telaVirtual.setTextDatum(TL_DATUM); 
-  telaVirtual.setCursor(15, 42); 
-  telaVirtual.setTextColor(TFT_WHITE);
-  telaVirtual.print("ESP32 + TFT_eSPI\nVersao 1.0.0\nCriado por Wilhan A.");
-
-  telaVirtual.pushSprite(0, 0); // Joga na tela
-}
-
-// --- SETUP PRINCIPAL ---
 void setup() {
+  Serial.begin(115200);
+
+  // Inicializa o display físico
   tft.init();
-  tft.setRotation(3); // Inverte para Modo Paisagem (160x128)
-  tft.fillScreen(TFT_BLACK);
+  tft.setRotation(3); 
 
-  // Aloca a memória RAM (~40KB) para o buffer de double buffering
-  telaVirtual.createSprite(160, 128); 
+  // Inicializa o LVGL
+  lv_init();
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, SCREEN_WIDTH * 10);
 
-  // Configuração dos botões físicos com pull-up interno
-  pinMode(BOTAO_ACAO, INPUT_PULLUP);
-  pinMode(BOTAO_NEXT, INPUT_PULLUP);
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = SCREEN_WIDTH;
+  disp_drv.ver_res = SCREEN_HEIGHT;
+  disp_drv.flush_cb = meu_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+  lv_disp_drv_register(&disp_drv);
 
-  // Criação da tarefa independente no FreeRTOS para leitura dos botões
-  xTaskCreate(
-    tarefaBotoes,    // Função
-    "LerBotoes",     // Nome
-    2048,            // Stack size
-    NULL,            // Parâmetros
-    1,               // Prioridade
-    NULL             // Handle
-  );
+  // Inicializa a interface gerada pelo EEZ Studio
+  ui_init();
+
+  // Cria as tarefas no FreeRTOS
+  xTaskCreate(tarefaTick, "LVGL_Tick", 1024, NULL, 3, NULL);
+  xTaskCreate(tarefaLVGL, "LVGL_Task", 4096, NULL, 2, NULL);
+  xTaskCreate(tarefaLeituraPot, "LerPot", 2048, NULL, 1, NULL);
 }
 
-// --- LOOP PRINCIPAL (Tarefa de Renderização da Tela) ---
 void loop() {
-  if (atualizarTela) {
-    switch (telaAtual) {
-      case TELA_MENU:    desenharMenuPrincipal(); break;
-      case TELA_STATUS:  desenharTelaStatus();    break;
-      case TELA_CONFIGS: desenharTelaConfigs();   break;
-      case TELA_SOBRE:   desenharTelaSobre();     break;
-    }
-    atualizarTela = false; 
-  }
-  
-  vTaskDelay(pdMS_TO_TICKS(5)); // Pausa curta para gerenciamento de contexto do FreeRTOS
-}
-
-// --- TAREFA FREERTOS: MONITORAMENTO DOS BOTÕES ---
-void tarefaBotoes(void *pvParameters) {
-  bool ultimoEstadoAcao = HIGH;
-  bool ultimoEstadoNext = HIGH;
-
-  while(1) {
-    bool estadoAcao = digitalRead(BOTAO_ACAO);
-    bool estadoNext = digitalRead(BOTAO_NEXT);
-
-    // Lógica do Botão de Ação (Aperto detectado na transição de HIGH para LOW)
-    if (estadoAcao == LOW && ultimoEstadoAcao == HIGH) {
-      if (telaAtual == TELA_MENU) {
-        if (itemSelecionado == 0) telaAtual = TELA_STATUS;
-        if (itemSelecionado == 1) telaAtual = TELA_CONFIGS;
-        if (itemSelecionado == 2) telaAtual = TELA_SOBRE;
-      } else {
-        telaAtual = TELA_MENU; // Se estiver em uma sub-tela, volta para o menu
-      }
-      atualizarTela = true;
-      vTaskDelay(pdMS_TO_TICKS(150)); // Debounce por software para evitar repetição
-    }
-    ultimoEstadoAcao = estadoAcao;
-
-    // Lógica do Botão Próximo (Aperto detectado na transição de HIGH para LOW)
-    if (estadoNext == LOW && ultimoEstadoNext == HIGH) {
-      if (telaAtual == TELA_MENU) {
-        itemSelecionado = (itemSelecionado + 1) % TOTAL_ITENS; // Efeito carrossel
-        atualizarTela = true;
-      }
-      vTaskDelay(pdMS_TO_TICKS(150)); // Debounce
-    }
-    ultimoEstadoNext = estadoNext;
-
-    vTaskDelay(pdMS_TO_TICKS(20)); // Libera processador por 20ms antes de ler de novo
-  }
+  // O loop fica vazio. O FreeRTOS gerencia tudo nas tarefas paralelas.
+  vTaskDelete(NULL);
 }
